@@ -175,6 +175,14 @@ MIT License — free to use, modify, and distribute.
 
 ---
 
+## Contributors
+
+[![Sujal](https://img.shields.io/badge/Sujal-UI%2FUX-blue)](https://github.com/sujalmakwana200)
+[![Ritik](https://img.shields.io/badge/Ritik-Backend-green)](https://github.com/ritik)
+[![Rohit](https://img.shields.io/badge/Rohit-Intern-orange)](https://github.com/rohit)
+[![Sharang](https://img.shields.io/badge/Sharang-QA-purple)](https://github.com/sharang)
+[![Dheeraj](https://img.shields.io/badge/Dheeraj-Intern-orange)](https://github.com/dheeraj)
+
 <div align="center">
   Built with love by Team Red Dragons 🐉
 </div>
