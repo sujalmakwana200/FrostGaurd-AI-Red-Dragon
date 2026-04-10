@@ -355,31 +355,33 @@ st.markdown("""
 #  GEMINI API KEY INPUT  (only shown if not in environment)
 # ─────────────────────────────────────────────────────────────
 if not GEMINI_API_KEY_ENV:
-    key_col, status_col = st.columns([3, 1])
-    with key_col:
-        entered_key = st.text_input(
-            "🔑 Gemini API Key",
-            type="password",
-            placeholder="Paste your key from aistudio.google.com — saved for this session",
-            value=st.session_state.get("gemini_api_key", ""),
-            label_visibility="collapsed",
+    if not st.session_state.get("gemini_api_key"):
+        # Key not entered yet — show input field
+        key_col, _ = st.columns([3, 1])
+        with key_col:
+            entered_key = st.text_input(
+                "🔑 Gemini API Key",
+                type="password",
+                placeholder="Paste your key from aistudio.google.com",
+                label_visibility="collapsed",
+            )
+            if entered_key:
+                st.session_state["gemini_api_key"] = entered_key
+                st.rerun()  # immediately hide input and show status
+        st.markdown(
+            '<div style="font-size:0.7rem; color:#555; margin-bottom:0.6rem;">'
+            'Get your free key at <a href="https://aistudio.google.com" style="color:#4FC3F7;">aistudio.google.com</a>'
+            '</div>',
+            unsafe_allow_html=True
         )
-        if entered_key:
-            st.session_state["gemini_api_key"] = entered_key
-    with status_col:
-        if st.session_state.get("gemini_api_key"):
-            st.markdown(
-                '<div style="background:#0a1a0a; border:1px solid #1a3a1a; border-radius:8px; '
-                'padding:8px 12px; font-size:0.78rem; color:#4CAF50;">🟢 AI Online</div>',
-                unsafe_allow_html=True
-            )
-        else:
-            st.markdown(
-                '<div style="background:#1a1000; border:1px solid #3a2000; border-radius:8px; '
-                'padding:8px 12px; font-size:0.78rem; color:#FFA500;">🔴 AI Offline — enter key above</div>',
-                unsafe_allow_html=True
-            )
-    st.markdown("<div style='margin-bottom:0.4rem;'></div>", unsafe_allow_html=True)
+    else:
+        # Key saved — show only a small status badge, no input visible
+        st.markdown(
+            '<div style="display:inline-block; background:#0a1a0a; border:1px solid #1a3a1a; '
+            'border-radius:8px; padding:5px 14px; font-size:0.75rem; color:#4CAF50; margin-bottom:0.6rem;">'
+            '🟢 Gemini AI Online</div>',
+            unsafe_allow_html=True
+        )
 
 # ─────────────────────────────────────────────────────────────
 #  CONTROLS ROW  (no sidebar — everything inline)
