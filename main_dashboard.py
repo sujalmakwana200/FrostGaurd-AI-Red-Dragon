@@ -517,7 +517,7 @@ while True:
 
     # ── Auto Gemini trigger — non-blocking, fires in background thread ──
     now_ts = time.time()
-    if (is_warn or is_crit) and (now_ts - st.session_state.gemini_last_run > 30):
+    if (is_warn or is_crit) and (now_ts - st.session_state.gemini_last_run > 120):
         gemini_analyze_async(
             temp, st.session_state.temp_history,
             st.session_state.speed_kmh,
