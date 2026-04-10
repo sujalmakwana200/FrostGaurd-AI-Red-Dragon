@@ -9,6 +9,7 @@ import sys
 import os
 import threading
 import queue
+import google.generativeai as genai
 
 # ─────────────────────────────────────────────────────────────
 #  AUTO-LAUNCH bridge.py + sensor_simulator.py as background
@@ -57,11 +58,8 @@ st.set_page_config(
 # ─────────────────────────────────────────────────────────────
 #  GEMINI API KEY  ← free at aistudio.google.com
 # ─────────────────────────────────────────────────────────────
-GEMINI_API_KEY = "AIzaSyDqY1r1af2s46W-vIkun9nsepplW9OWWCY"
-GEMINI_URL     = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-2.5-flash:generateContent"
-)
+# Gemini key — loaded from env (Streamlit Cloud) or entered by user at runtime
+GEMINI_API_KEY_ENV = os.environ.get("GEMINI_API_KEY", "")
 
 # ─────────────────────────────────────────────────────────────
 #  OLED DARK THEME  — injected via st.markdown
@@ -209,13 +207,22 @@ def voice(msg: str):
 
 
 # ─────────────────────────────────────────────────────────────
-#  GEMINI — runs in background thread, never blocks the UI
+#  GEMINI — official SDK, background thread, never blocks UI
 # ─────────────────────────────────────────────────────────────
-_gemini_queue  = queue.Queue()   # thread puts result here
-_gemini_running = threading.Event()  # prevents duplicate calls
+_gemini_queue   = queue.Queue()
+_gemini_running = threading.Event()
 
-def _gemini_worker(prompt):
-    """Runs in a daemon thread — retries up to 3 times then gives up."""
+
+def _get_active_key():
+    """Returns API key — env var first, then user-entered key from session."""
+    return (
+        GEMINI_API_KEY_ENV
+        or st.session_state.get("gemini_api_key", "")
+    )
+
+
+def _gemini_worker(prompt, api_key):
+    """Runs in daemon thread using official google-generativeai SDK."""
     import json as _json, re as _re
 
     def _extract_json(text):
@@ -237,42 +244,37 @@ def _gemini_worker(prompt):
         return None
 
     result = None
-    for attempt, timeout_s in enumerate([8, 15, 20], 1):
+    for attempt in range(3):
         try:
-            resp = requests.post(
-                GEMINI_URL,
-                params={"key": GEMINI_API_KEY},
-                json={"contents": [{"parts": [{"text": prompt}]}]},
-                timeout=timeout_s,
-            )
-            resp.raise_for_status()
-            raw    = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            result = _extract_json(raw)
+            genai.configure(api_key=api_key)
+            model    = genai.GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(prompt)
+            result   = _extract_json(response.text)
             required = ("temp_prediction","route_risk","cargo_damage","driver_message","severity")
             if result and all(k in result for k in required):
                 break
             result = None
         except Exception:
-            if attempt < 3:
-                time.sleep(1.5)
-    _gemini_queue.put(result)   # None = all retries failed
-    _gemini_running.clear()     # allow next call
+            if attempt < 2:
+                time.sleep(2)
+    _gemini_queue.put(result)
+    _gemini_running.clear()
 
 
 def gemini_analyze_async(temp, temp_history, speed, dist_covered,
                          dist_remaining, is_crit, is_warn, rerouted,
                          reroute_target, minutes_above_safe):
-    """Fire-and-forget: launches Gemini in background, returns immediately."""
-    if _gemini_running.is_set():
-        return   # already a call in flight — don't stack
+    """Fire-and-forget — skips silently if no key or call already in flight."""
+    api_key = _get_active_key()
+    if not api_key or _gemini_running.is_set():
+        return
 
     status_str  = "CRITICAL" if is_crit else ("WARNING" if is_warn else "SAFE")
     reroute_str = (
         f"Truck rerouted to {reroute_target['name']} in {reroute_target['city']}."
         if rerouted else "Truck on original route to Ahmedabad."
     )
-    trend     = temp_history[-5:] if len(temp_history) >= 5 else temp_history
-    trend_str = " -> ".join(str(t) for t in trend)
+    trend_str = " -> ".join(str(t) for t in (temp_history[-5:] if len(temp_history) >= 5 else temp_history))
 
     prompt = f"""You are FrostGuard AI, an intelligent cold chain monitoring system.
 Analyze real-time truck telemetry. Return ONLY a JSON object, no markdown, no extra text.
@@ -289,18 +291,16 @@ Return ONLY this JSON:
 {{"temp_prediction":"1 sentence prediction","route_risk":"1 sentence risk","cargo_damage":"1 sentence damage","driver_message":"max 12 words for driver","severity":"LOW or MEDIUM or HIGH or CRITICAL"}}"""
 
     _gemini_running.set()
-    t = threading.Thread(target=_gemini_worker, args=(prompt,), daemon=True)
-    t.start()
+    threading.Thread(target=_gemini_worker, args=(prompt, api_key), daemon=True).start()
 
 
 def gemini_collect_result():
-    """Call once per loop tick — returns result dict if ready, else None."""
+    """Non-blocking — returns result if thread finished, else None."""
     try:
         result = _gemini_queue.get_nowait()
         if result:
             st.session_state["gemini_last_good"] = result
             return result
-        # result is None = all retries failed, return last good
         return st.session_state.get("gemini_last_good", None)
     except queue.Empty:
         return None
@@ -350,6 +350,36 @@ st.markdown("""
   </div>
 </div>
 """, unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────
+#  GEMINI API KEY INPUT  (only shown if not in environment)
+# ─────────────────────────────────────────────────────────────
+if not GEMINI_API_KEY_ENV:
+    key_col, status_col = st.columns([3, 1])
+    with key_col:
+        entered_key = st.text_input(
+            "🔑 Gemini API Key",
+            type="password",
+            placeholder="Paste your key from aistudio.google.com — saved for this session",
+            value=st.session_state.get("gemini_api_key", ""),
+            label_visibility="collapsed",
+        )
+        if entered_key:
+            st.session_state["gemini_api_key"] = entered_key
+    with status_col:
+        if st.session_state.get("gemini_api_key"):
+            st.markdown(
+                '<div style="background:#0a1a0a; border:1px solid #1a3a1a; border-radius:8px; '
+                'padding:8px 12px; font-size:0.78rem; color:#4CAF50;">🟢 AI Online</div>',
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                '<div style="background:#1a1000; border:1px solid #3a2000; border-radius:8px; '
+                'padding:8px 12px; font-size:0.78rem; color:#FFA500;">🔴 AI Offline — enter key above</div>',
+                unsafe_allow_html=True
+            )
+    st.markdown("<div style='margin-bottom:0.4rem;'></div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
 #  CONTROLS ROW  (no sidebar — everything inline)
