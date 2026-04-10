@@ -352,46 +352,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
-#  GEMINI API KEY INPUT  (only shown if not in environment)
 # ─────────────────────────────────────────────────────────────
-if not GEMINI_API_KEY_ENV:
-    # Restore key from query params on refresh
-    if not st.session_state.get("gemini_api_key"):
-        saved = st.query_params.get("gk", "")
-        if saved:
-            st.session_state["gemini_api_key"] = saved
-
-    if not st.session_state.get("gemini_api_key"):
-        # Key not entered yet — show input + save button
-        key_col, btn_col = st.columns([4, 1])
-        with key_col:
-            entered_key = st.text_input(
-                "🔑 Gemini API Key",
-                type="password",
-                placeholder="Paste your key from aistudio.google.com",
-                label_visibility="collapsed",
-            )
-        with btn_col:
-            save_btn = st.button("Save Key")
-        if save_btn and entered_key:
-            st.session_state["gemini_api_key"] = entered_key
-            st.query_params["gk"] = entered_key   # persists across refresh
-        st.markdown(
-            '<div style="font-size:0.7rem; color:#555; margin-bottom:0.6rem;">'
-            'Get your free key at <a href="https://aistudio.google.com" style="color:#4FC3F7;">aistudio.google.com</a>'
-            '</div>',
-            unsafe_allow_html=True
-        )
-    else:
-        # Key saved — show only status badge, no input visible
-        st.markdown(
-            '<div style="display:inline-block; background:#0a1a0a; border:1px solid #1a3a1a; '
-            'border-radius:8px; padding:5px 14px; font-size:0.75rem; color:#4CAF50; margin-bottom:0.6rem;">'
-            '🟢 Gemini AI Online</div>',
-            unsafe_allow_html=True
-        )
-
+#  RESTORE KEY FROM QUERY PARAMS (runs before render)
 # ─────────────────────────────────────────────────────────────
+if not GEMINI_API_KEY_ENV and not st.session_state.get('gemini_api_key'):
+    saved = st.query_params.get('gk', '')
+    if saved:
+        st.session_state['gemini_api_key'] = saved
+
 #  CONTROLS ROW  (no sidebar — everything inline)
 # ─────────────────────────────────────────────────────────────
 ctrl1, ctrl2, ctrl3, ctrl4 = st.columns([1, 1, 1, 5])
@@ -593,6 +561,30 @@ while True:
     #  RENDER
     # ─────────────────────────────────────────
     with placeholder.container():
+
+        # ── Gemini key input (only if not set via env) ──
+        if not GEMINI_API_KEY_ENV:
+            if not st.session_state.get("gemini_api_key"):
+                key_col, btn_col = st.columns([4, 1])
+                with key_col:
+                    entered_key = st.text_input(
+                        "🔑 Gemini API Key", type="password",
+                        placeholder="Paste your key from aistudio.google.com",
+                        label_visibility="collapsed",
+                    )
+                with btn_col:
+                    if st.button("Save Key") and entered_key:
+                        st.session_state["gemini_api_key"] = entered_key
+                        st.query_params["gk"] = entered_key
+                st.markdown(
+                    '<div style="font-size:0.7rem;color:#555;margin-bottom:0.5rem;">'
+                    'Get free key at <a href="https://aistudio.google.com" style="color:#4FC3F7;">aistudio.google.com</a>'
+                    '</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(
+                    '<div style="display:inline-block;background:#0a1a0a;border:1px solid #1a3a1a;'
+                    'border-radius:8px;padding:4px 12px;font-size:0.73rem;color:#4CAF50;margin-bottom:0.5rem;">'
+                    '🟢 Gemini AI Online</div>', unsafe_allow_html=True)
 
         # Alert banner
         if is_crit and st.session_state.rerouted:
