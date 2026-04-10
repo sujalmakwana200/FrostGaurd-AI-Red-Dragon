@@ -3,3 +3,4 @@ pydeck
 requests
 flask
 pandas
+google-generativeai
