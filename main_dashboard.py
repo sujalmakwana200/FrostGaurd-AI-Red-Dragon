@@ -9,7 +9,8 @@ import sys
 import os
 import threading
 import queue
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 # ─────────────────────────────────────────────────────────────
 #  AUTO-LAUNCH bridge.py + sensor_simulator.py as background
@@ -246,20 +247,18 @@ def _gemini_worker(prompt, api_key):
     result      = None
     last_error  = None
 
-    # Configure once per worker call
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-pro-exp-03-25",
-        generation_config=genai.GenerationConfig(
-            temperature=0.3,       # more deterministic JSON output
-            max_output_tokens=512,
-        ),
-    )
-
     for attempt in range(3):
         try:
-            response = model.generate_content(prompt)
-            result   = _extract_json(response.text)
+            client   = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                    max_output_tokens=512,
+                ),
+            )
+            result = _extract_json(response.text)
             required = ("temp_prediction","route_risk","cargo_damage","driver_message","severity")
             if result and all(k in result for k in required):
                 last_error = None
