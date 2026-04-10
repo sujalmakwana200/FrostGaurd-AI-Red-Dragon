@@ -243,21 +243,40 @@ def _gemini_worker(prompt, api_key):
                 pass
         return None
 
-    result = None
+    result      = None
+    last_error  = None
+
+    # Configure once per worker call
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel(
+        model_name="gemini-2.5-pro-exp-03-25",
+        generation_config=genai.GenerationConfig(
+            temperature=0.3,       # more deterministic JSON output
+            max_output_tokens=512,
+        ),
+    )
+
     for attempt in range(3):
         try:
-            genai.configure(api_key=api_key)
-            model    = genai.GenerativeModel("gemini-1.5-flash")
             response = model.generate_content(prompt)
             result   = _extract_json(response.text)
             required = ("temp_prediction","route_risk","cargo_damage","driver_message","severity")
             if result and all(k in result for k in required):
+                last_error = None
                 break
-            result = None
-        except Exception:
+            result     = None
+            last_error = "JSON missing required keys"
+        except Exception as e:
+            last_error = str(e)
+            result     = None
             if attempt < 2:
                 time.sleep(2)
-    _gemini_queue.put(result)
+
+    if last_error and result is None:
+        # Put error in queue so event log shows what went wrong
+        _gemini_queue.put({"_error": last_error})
+    else:
+        _gemini_queue.put(result)
     _gemini_running.clear()
 
 
@@ -298,8 +317,13 @@ def gemini_collect_result():
     """Non-blocking — returns result if thread finished, else None."""
     try:
         result = _gemini_queue.get_nowait()
+        if result and "_error" in result:
+            # API returned an error — log it but show last good result
+            st.session_state["gemini_last_error"] = result["_error"]
+            return st.session_state.get("gemini_last_good", None)
         if result:
-            st.session_state["gemini_last_good"] = result
+            st.session_state["gemini_last_good"]  = result
+            st.session_state["gemini_last_error"] = None
             return result
         return st.session_state.get("gemini_last_good", None)
     except queue.Empty:
@@ -515,6 +539,14 @@ while True:
             "msg"   : f"[AI] {ready['driver_message']}",
             "ai"    : True,
             "result": ready,
+        })
+    elif st.session_state.get("gemini_last_error"):
+        err = st.session_state.pop("gemini_last_error")
+        st.session_state.warning_log.insert(0, {
+            "icon": "⚠️",
+            "time": time.strftime("%H:%M:%S"),
+            "msg" : f"[AI Error] {err[:80]}",
+            "ai"  : False,
         })
 
     # ── Dot color ──
