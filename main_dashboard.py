@@ -350,7 +350,9 @@ if "initialized" not in st.session_state:
         "warn_alerted"       : False,
         "gemini_result"      : None,
         "gemini_last_run"    : 0,
-        "minutes_above_safe": 0,
+        "gemini_last_error"  : None,
+        "gemini_last_good"   : None,
+        "minutes_above_safe" : 0,
     })
 
 
@@ -386,9 +388,9 @@ if not GEMINI_API_KEY_ENV and not st.session_state.get('gemini_api_key'):
 #  CONTROLS ROW  (no sidebar — everything inline)
 # ─────────────────────────────────────────────────────────────
 ctrl1, ctrl2, ctrl3, ctrl4 = st.columns([1, 1, 1, 5])
-inject_failure = ctrl1.button("🚨 Compressor Fail")
-reset_btn      = ctrl2.button("🔄 Reset")
-ask_ai_btn     = ctrl3.button("🧠 Ask Gemini")
+inject_failure = ctrl1.button("🚨 Compressor Fail", key="btn_fail")
+reset_btn      = ctrl2.button("🔄 Reset", key="btn_reset")
+ask_ai_btn     = ctrl3.button("🧠 Ask Gemini", key="btn_gemini")
 
 if reset_btn:
     for k in list(st.session_state.keys()):
@@ -541,12 +543,15 @@ while True:
         })
     elif st.session_state.get("gemini_last_error"):
         err = st.session_state.pop("gemini_last_error")
-        st.session_state.warning_log.insert(0, {
-            "icon": "⚠️",
-            "time": time.strftime("%H:%M:%S"),
-            "msg" : f"[AI Error] {err[:80]}",
-            "ai"  : False,
-        })
+        # Only show error if we have never had a successful result
+        # (avoids showing stale errors from before key was entered)
+        if not st.session_state.get("gemini_last_good"):
+            st.session_state.warning_log.insert(0, {
+                "icon": "⚠️",
+                "time": time.strftime("%H:%M:%S"),
+                "msg" : f"[AI Error] {err[:80]}",
+                "ai"  : False,
+            })
 
     # ── Dot color ──
     dot_color = [255, 40, 40, 255] if is_crit else ([255, 165, 0, 255] if is_warn else [0, 220, 100, 255])
@@ -604,7 +609,7 @@ while True:
                         label_visibility="collapsed",
                     )
                 with btn_col:
-                    if st.button("Save Key") and entered_key:
+                    if st.button("Save Key", key="btn_save_key") and entered_key:
                         st.session_state["gemini_api_key"] = entered_key
                         st.query_params["gk"] = entered_key
                 st.markdown(
