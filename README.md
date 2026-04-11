@@ -184,6 +184,7 @@ MIT License — free to use, modify, and distribute.
 [![Sharang](https://img.shields.io/badge/Sharang-Product_Owner-purple)](https://github.com/sharang)
 [![Dheeraj](https://img.shields.io/badge/Dheeraj-Intern-orange)](https://github.com/dheeraj)
 [![Alanjohn](https://img.shields.io/badge/Alanjohn-Business_SPOC-red)](https://github.com/dev-alanjohn)
+[![Danish](https://img.shields.io/badge/Danish-QA-blue)](https://github.com/danishuddinkhan)
 
 <div align="center">
   Built with love by Team Red Dragons 🐉
