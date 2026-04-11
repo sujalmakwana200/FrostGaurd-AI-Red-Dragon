@@ -497,8 +497,8 @@ while True:
 
         # Try to poll local bridge for latest telemetry (non-fatal). If available,
         # prefer telemetry temperature and coords and skip local simulation updates.
-        telemetry_used = False
-        try:
+    telemetry_used = False
+    try:
             resp = requests.get("http://127.0.0.1:5000/latest", timeout=0.6)
             if resp.status_code == 200:
                 tele = resp.json()
