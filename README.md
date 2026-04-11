@@ -166,7 +166,7 @@ frostguard-ai/
 | **Rohit** | Intern — Sensor simulator, OSRM route integration, Discord webhook alerts |
 | **Dheeraj** | Intern — Development support and contributions |
 | **Sharang** | QA — Testing, bug reporting, edge case validation, quality assurance |
-| **Alanjohn** | Business SPOC - Communication hub, requirement gathering, issue resolution, progress tracking |
+| **Alanjohn** | Business SPOC — Communication hub, requirement gathering, issue resolution, progress tracking |
 
 ---
 
