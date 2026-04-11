@@ -294,23 +294,39 @@ def gemini_analyze_async(temp, temp_history, speed, dist_covered,
     )
     trend_str = " -> ".join(str(t) for t in (temp_history[-5:] if len(temp_history) >= 5 else temp_history))
 
-    prompt = f"""You are FrostGuard AI, an intelligent cold chain monitoring system.
-Analyze real-time truck telemetry. Return ONLY a JSON object, no markdown, no extra text.
+   prompt = f"""You are FrostGuard AI, a STRICT cold-chain monitoring system.
+
+YOU MUST FOLLOW THESE RULES:
+
+- Vaccines must stay between 2°C and 8°C
+- If temperature > 8°C → CRITICAL
+- If temperature > 6.5°C → WARNING
+- NEVER say everything is fine if WARNING or CRITICAL
+- Your output MUST match the telemetry exactly
 
 TELEMETRY:
-- Cargo: Vaccines (must stay 2-8 C)
-- Temperature: {temp} C  |  Status: {status_str}
+- Cargo: Vaccines
+- Temperature: {temp} C
+- Status: {status_str}
 - Temp trend: {trend_str}
-- Speed: {speed:.0f} km/h  |  Covered: {dist_covered:.1f} km  |  Remaining: {dist_remaining:.1f} km
-- Minutes above safe threshold: {minutes_above_safe:.1f}
+- Speed: {speed:.0f} km/h
+- Covered: {dist_covered:.1f} km
+- Remaining: {dist_remaining:.1f} km
+- Minutes above safe: {minutes_above_safe:.1f}
 - {reroute_str}
 
-Return ONLY this JSON:
-{{"temp_prediction":"1 sentence prediction","route_risk":"1 sentence risk","cargo_damage":"1 sentence damage","driver_message":"max 12 words for driver","severity":"LOW or MEDIUM or HIGH or CRITICAL"}}"""
+LOGIC RULES:
+- If status is CRITICAL:
+    severity MUST be "CRITICAL"
+    cargo_damage MUST mention spoilage or damage
+    route_risk MUST mention danger
+- If status is WARNING:
+    severity MUST be "MEDIUM" or "HIGH"
+- If rerouted:
+    route_risk MUST mention rerouting
 
-    _gemini_running.set()
-    threading.Thread(target=_gemini_worker, args=(prompt, api_key), daemon=True).start()
-
+Return ONLY JSON:
+{{"temp_prediction":"...","route_risk":"...","cargo_damage":"...","driver_message":"...","severity":"..."}}"""
 
 def gemini_collect_result():
     """Non-blocking — returns result if thread finished, else None."""
