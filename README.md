@@ -161,8 +161,8 @@ frostguard-ai/
 
 | Name | Role |
 |---|---|
-| **Sujal** | UI/UX — Dashboard design, OLED dark theme, metric cards, map layers, Gemini integration |
-| **Ritik** | Backend — Bridge listener, telemetry pipeline, Flask server, CSV logging |
+| **Sujal** | Technical Lead — Dashboard design, OLED dark theme, metric cards, map layers, Gemini integration |
+| **Ritik** | Developer — Bridge listener, telemetry pipeline, Flask server, CSV logging |
 | **Rohit** | Intern — Sensor simulator, OSRM route integration, Discord webhook alerts |
 | **Dheeraj** | Intern — Development support and contributions |
 | **Sharang** | Product Owner — Defines product vision, manages backlog, prioritizes features |
@@ -179,8 +179,8 @@ MIT License — free to use, modify, and distribute.
 
 ## Contributors
 
-[![Sujal](https://img.shields.io/badge/Sujal-UI%2FUX-blue)](https://github.com/sujalmakwana200)
-[![Ritik](https://img.shields.io/badge/Ritik-Backend-green)](https://github.com/ritikraushan812-rgb)
+[![Sujal](https://img.shields.io/badge/Sujal-Technical_Lead-blue)](https://github.com/sujalmakwana200)
+[![Ritik](https://img.shields.io/badge/Ritik-Developer-green)](https://github.com/ritikraushan812-rgb)
 [![Rohit](https://img.shields.io/badge/Rohit-Intern-orange)](https://github.com/rohit)
 [![Sharang](https://img.shields.io/badge/Sharang-Product_Owner-purple)](https://github.com/sharang)
 [![Dheeraj](https://img.shields.io/badge/Dheeraj-Intern-orange)](https://github.com/dheeraj)
