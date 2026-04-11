@@ -29,22 +29,30 @@ def launch_background_services():
     except Exception:
         pass  # Not running yet — launch it
 
-    # Launch bridge.py
+    # Launch bridge.py — log stdout/stderr to files so presentation stays clean
     if os.path.exists(bridge_path):
-        subprocess.Popen(
-            [sys.executable, bridge_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        time.sleep(1.5)  # Give Flask a moment to bind to port 5000
+        try:
+            bridge_log = open(os.path.join(base_dir, "bridge.log"), "ab")
+            subprocess.Popen(
+                [sys.executable, bridge_path],
+                stdout=bridge_log,
+                stderr=bridge_log,
+            )
+            time.sleep(1.5)  # Give Flask a moment to bind to port 5000
+        except Exception:
+            pass
 
-    # Launch sensor_simulator.py
+    # Launch sensor_simulator.py — capture logs to file
     if os.path.exists(simulator_path):
-        subprocess.Popen(
-            [sys.executable, simulator_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        try:
+            sim_log = open(os.path.join(base_dir, "simulator.log"), "ab")
+            subprocess.Popen(
+                [sys.executable, simulator_path],
+                stdout=sim_log,
+                stderr=sim_log,
+            )
+        except Exception:
+            pass
 
 if "services_launched" not in st.session_state:
     launch_background_services()
@@ -207,6 +215,7 @@ def voice(msg: str):
 
 
 
+
 # ─────────────────────────────────────────────────────────────
 #  GEMINI — official SDK, background thread, never blocks UI
 # ─────────────────────────────────────────────────────────────
@@ -247,6 +256,7 @@ def _gemini_worker(prompt, api_key):
     result      = None
     last_error  = None
 
+    resp_text = ""
     for attempt in range(3):
         try:
             client   = genai.Client(api_key=api_key)
@@ -258,7 +268,27 @@ def _gemini_worker(prompt, api_key):
                     max_output_tokens=512,
                 ),
             )
-            result = _extract_json(response.text)
+            # SDK responses may expose text differently across versions.
+            # Try common attributes then fallback to str(response).
+            resp_text = None
+            try:
+                resp_text = getattr(response, "text", None)
+            except Exception:
+                resp_text = None
+            if not resp_text:
+                try:
+                    # Some SDKs return a candidates list with content
+                    resp_text = response.candidates[0].content if hasattr(response, "candidates") and response.candidates else None
+                except Exception:
+                    resp_text = None
+            if not resp_text:
+                try:
+                    # Fallback to string representation
+                    resp_text = str(response)
+                except Exception:
+                    resp_text = ""
+
+            result = _extract_json(resp_text)
             required = ("temp_prediction","route_risk","cargo_damage","driver_message","severity")
             if result and all(k in result for k in required):
                 last_error = None
@@ -272,8 +302,8 @@ def _gemini_worker(prompt, api_key):
                 time.sleep(2)
 
     if last_error and result is None:
-        # Put error in queue so event log shows what went wrong
-        _gemini_queue.put({"_error": last_error})
+        # Put error in queue so event log shows what went wrong and include raw response
+        _gemini_queue.put({"_error": last_error, "_raw": resp_text})
     else:
         _gemini_queue.put(result)
     _gemini_running.clear()
@@ -288,13 +318,14 @@ def gemini_analyze_async(temp, temp_history, speed, dist_covered,
         return
 
     status_str  = "CRITICAL" if is_crit else ("WARNING" if is_warn else "SAFE")
-    reroute_str = (
-        f"Truck rerouted to {reroute_target['name']} in {reroute_target['city']}."
-        if rerouted else "Truck on original route to Ahmedabad."
-    )
+    # Guard against missing reroute_target to avoid KeyError when rerouted flag is set
+    if rerouted and reroute_target:
+        reroute_str = f"Truck rerouted to {reroute_target.get('name')} in {reroute_target.get('city')}."
+    else:
+        reroute_str = "Truck on original route to Ahmedabad."
     trend_str = " -> ".join(str(t) for t in (temp_history[-5:] if len(temp_history) >= 5 else temp_history))
 
-   prompt = f"""You are FrostGuard AI, a STRICT cold-chain monitoring system.
+    prompt = f"""You are FrostGuard AI, a STRICT cold-chain monitoring system.
 
 YOU MUST FOLLOW THESE RULES:
 
@@ -328,6 +359,10 @@ LOGIC RULES:
 Return ONLY JSON:
 {{"temp_prediction":"...","route_risk":"...","cargo_damage":"...","driver_message":"...","severity":"..."}}"""
 
+    _gemini_running.set()
+    threading.Thread(target=_gemini_worker, args=(prompt, api_key), daemon=True).start()
+
+
 def gemini_collect_result():
     """Non-blocking — returns result if thread finished, else None."""
     try:
@@ -335,6 +370,8 @@ def gemini_collect_result():
         if result and "_error" in result:
             # API returned an error — log it but show last good result
             st.session_state["gemini_last_error"] = result["_error"]
+            # store raw text for debugging
+            st.session_state["gemini_last_raw"] = result.get("_raw")
             return st.session_state.get("gemini_last_good", None)
         if result:
             st.session_state["gemini_last_good"]  = result
@@ -448,284 +485,351 @@ while True:
     route = st.session_state.active_route
     idx   = st.session_state.waypoint_idx
 
-    # Journey complete
     if idx >= len(route):
         with placeholder.container():
             t = st.session_state.reroute_target
             msg = f"✅ Arrived at **{t['name']}**, {t['city']} — Cargo secured 🧊" if t else "✅ Arrived in **Ahmedabad** — Journey complete 🎉"
             st.success(msg)
-            st.balloons()
         break
 
     lat, lon = route[idx]
     st.session_state.waypoint_idx += 1
 
-    # ── Simulated speed (smooth, realistic) ──
-    target_speed  = BASE_SPEED + random.uniform(-SPEED_NOISE, SPEED_NOISE)
-    current_speed = st.session_state.speed_kmh
-    # Smooth toward target — no sudden jumps
-    new_speed = current_speed + (target_speed - current_speed) * 0.08
-    st.session_state.speed_kmh = round(new_speed, 1)
+        # Try to poll local bridge for latest telemetry (non-fatal). If available,
+        # prefer telemetry temperature and coords and skip local simulation updates.
+        telemetry_used = False
+        try:
+            resp = requests.get("http://127.0.0.1:5000/latest", timeout=0.6)
+            if resp.status_code == 200:
+                tele = resp.json()
+                # update temperature if provided
+                if "temperature" in tele:
+                    try:
+                        st.session_state.temp = float(tele["temperature"])
+                        telemetry_used = True
+                    except Exception:
+                        pass
+                # use telemetry coords for display if present
+                if "lat" in tele and "lng" in tele:
+                    try:
+                        lat = float(tele["lat"])
+                        lon = float(tele["lng"])
+                    except Exception:
+                        pass
+        except Exception:
+            # bridge may not be running — fall back to internal sim
+            telemetry_used = False
 
-    st.session_state.speed_history.append(st.session_state.speed_kmh)
-    st.session_state.speed_history = st.session_state.speed_history[-20:]
+        # ── Simulated speed (smooth, realistic) ──
+        target_speed  = BASE_SPEED + random.uniform(-SPEED_NOISE, SPEED_NOISE)
+        current_speed = st.session_state.speed_kmh
+        # Smooth toward target — no sudden jumps
+        new_speed = current_speed + (target_speed - current_speed) * 0.08
+        st.session_state.speed_kmh = round(new_speed, 1)
 
-    # ── Distance covered ──
-    if idx > 0:
-        prev_lat, prev_lon = route[idx - 1]
-        st.session_state.dist_covered += haversine(prev_lat, prev_lon, lat, lon)
+        st.session_state.speed_history.append(st.session_state.speed_kmh)
+        st.session_state.speed_history = st.session_state.speed_history[-20:]
 
-    dist_remaining = max(st.session_state.total_dist - st.session_state.dist_covered, 0)
-    eta_min = (dist_remaining / max(st.session_state.speed_kmh, 1)) * 60
+        # ── Distance covered ──
+        if idx > 0:
+            prev_lat, prev_lon = route[idx - 1]
+            st.session_state.dist_covered += haversine(prev_lat, prev_lon, lat, lon)
 
-    # ── Temperature ──
-    if inject_failure:
-        st.session_state.temp += random.uniform(0.9, 1.6)
-    elif st.session_state.temp > CRITICAL_AT:
-        st.session_state.temp += random.uniform(-0.15, 0.35)
-    elif st.session_state.temp > SAFE_MAX:
-        st.session_state.temp += random.uniform(-0.25, 0.18)
-    else:
-        st.session_state.temp = max(min(st.session_state.temp + random.uniform(-0.08, 0.18), 4.5), 3.5)
+        dist_remaining = max(st.session_state.total_dist - st.session_state.dist_covered, 0)
+        eta_min = (dist_remaining / max(st.session_state.speed_kmh, 1)) * 60
 
-    st.session_state.temp = round(min(max(st.session_state.temp, 2.0), TEMP_CEIL), 1)
-    temp    = st.session_state.temp
-    is_crit = temp > CRITICAL_AT
-    is_warn = temp > SAFE_MAX
-
-    if is_warn or is_crit:
-        st.session_state.minutes_above_safe += 1/60
-    else:
-        st.session_state.minutes_above_safe = 0
-
-    st.session_state.temp_history.append(temp)
-    st.session_state.temp_history = st.session_state.temp_history[-20:]
-
-    # ── Rerouting ──
-    if is_crit and not st.session_state.rerouted:
-        cs = nearest_cold_storage(lat, lon)
-        new_route, new_dist = fetch_osrm(lon, lat, cs["lon"], cs["lat"])
-        st.session_state.rerouted        = True
-        st.session_state.reroute_target  = cs
-        st.session_state.active_route    = new_route
-        st.session_state.waypoint_idx    = 0
-        st.session_state.total_dist      = new_dist
-        st.session_state.dist_covered    = 0.0
-        dist_to = haversine(lat, lon, cs["lat"], cs["lon"])
-        st.session_state.warning_log.insert(0, {
-            "icon": "🚨", "time": time.strftime("%H:%M:%S"),
-            "msg": f"CRITICAL {temp}°C — Rerouted to {cs['name']}, {cs['city']}"
-        })
-        voice(
-            f"Warning! Cargo temperature critical at {temp} degrees. "
-            f"Rerouting to {cs['name']} in {cs['city']}. "
-            f"Distance: {dist_to:.0f} kilometres."
-        )
-
-    elif is_warn and not st.session_state.warn_alerted:
-        st.session_state.warn_alerted = True
-        st.session_state.warning_log.insert(0, {
-            "icon": "⚠️", "time": time.strftime("%H:%M:%S"),
-            "msg": f"WARNING {temp}°C — Compressor activated"
-        })
-        voice(f"Temperature warning. Cargo at {temp} degrees. Compressor activated.")
-
-    if not is_warn:
-        st.session_state.warn_alerted = False
-
-    # ── Auto Gemini trigger — non-blocking, fires in background thread ──
-    now_ts = time.time()
-    if (is_warn or is_crit) and (now_ts - st.session_state.gemini_last_run > 120):
-        gemini_analyze_async(
-            temp, st.session_state.temp_history,
-            st.session_state.speed_kmh,
-            st.session_state.dist_covered,
-            dist_remaining, is_crit, is_warn,
-            st.session_state.rerouted,
-            st.session_state.reroute_target,
-            st.session_state.minutes_above_safe,
-        )
-        st.session_state.gemini_last_run = now_ts
-
-    # ── Collect result if thread finished (non-blocking check) ──
-    ready = gemini_collect_result()
-    if ready:
-        st.session_state.warning_log.insert(0, {
-            "icon"  : "🧠",
-            "time"  : time.strftime("%H:%M:%S"),
-            "msg"   : f"[AI] {ready['driver_message']}",
-            "ai"    : True,
-            "result": ready,
-        })
-    elif st.session_state.get("gemini_last_error"):
-        err = st.session_state.pop("gemini_last_error")
-        # Only show error if we have never had a successful result
-        # (avoids showing stale errors from before key was entered)
-        if not st.session_state.get("gemini_last_good"):
-            st.session_state.warning_log.insert(0, {
-                "icon": "⚠️",
-                "time": time.strftime("%H:%M:%S"),
-                "msg" : f"[AI Error] {err[:80]}",
-                "ai"  : False,
-            })
-
-    # ── Dot color ──
-    dot_color = [255, 40, 40, 255] if is_crit else ([255, 165, 0, 255] if is_warn else [0, 220, 100, 255])
-
-    # ── Map layers ──
-    layers = []
-
-    # Original planned route
-    orig_line = [[lo, la] for la, lo in st.session_state.main_route]
-    layers.append(pdk.Layer("PathLayer",
-        data=[{"path": orig_line}], get_path="path",
-        get_color=[40, 80, 200, 70] if st.session_state.rerouted else [0, 140, 255, 130],
-        width_scale=14, width_min_pixels=3))
-
-    # Reroute path
-    if st.session_state.rerouted:
-        rr_line = [[lo, la] for la, lo in st.session_state.active_route]
-        layers.append(pdk.Layer("PathLayer",
-            data=[{"path": rr_line}], get_path="path",
-            get_color=[255, 110, 0, 220], width_scale=16, width_min_pixels=4))
-
-    # Cold storage dots
-    layers.append(pdk.Layer("ScatterplotLayer",
-        data=[{"lat": c["lat"], "lon": c["lon"], "name": c["name"], "city": c["city"]} for c in COLD_STORAGES],
-        get_position="[lon, lat]", get_color=[0, 200, 255, 180],
-        get_radius=500, radiusMinPixels=9, pickable=True))
-
-    # Reroute target glow
-    if st.session_state.rerouted and st.session_state.reroute_target:
-        t = st.session_state.reroute_target
-        layers.append(pdk.Layer("ScatterplotLayer",
-            data=[{"lat": t["lat"], "lon": t["lon"]}],
-            get_position="[lon, lat]", get_color=[255, 50, 50, 60],
-            get_radius=1400, radiusMinPixels=22))
-
-    # Truck
-    layers.append(pdk.Layer("ScatterplotLayer",
-        data=[{"lat": lat, "lon": lon}],
-        get_position="[lon, lat]", get_color=dot_color,
-        get_radius=320, radiusMinPixels=10, radiusMaxPixels=20))
-
-    # ─────────────────────────────────────────
-    #  RENDER
-    # ─────────────────────────────────────────
-    with placeholder.container():
-
-        # ── Gemini key input (only if not set via env) ──
-        if not GEMINI_API_KEY_ENV:
-            if not st.session_state.get("gemini_api_key"):
-                key_col, btn_col = st.columns([4, 1])
-                with key_col:
-                    entered_key = st.text_input(
-                        "🔑 Gemini API Key", type="password",
-                        placeholder="Paste your key from aistudio.google.com",
-                        label_visibility="collapsed",
-                        key="gemini_key_input",
-                    )
-                with btn_col:
-                    if st.button("Save Key", key="btn_save_key") and entered_key:
-                        st.session_state["gemini_api_key"] = entered_key
-                        st.query_params["gk"] = entered_key
-                st.markdown(
-                    '<div style="font-size:0.7rem;color:#555;margin-bottom:0.5rem;">'
-                    'Get free key at <a href="https://aistudio.google.com" style="color:#4FC3F7;">aistudio.google.com</a>'
-                    '</div>', unsafe_allow_html=True)
+        # ── Temperature ── (only simulate when external telemetry not available)
+        if not telemetry_used:
+            if inject_failure:
+                st.session_state.temp += random.uniform(0.9, 1.6)
+            elif st.session_state.temp > CRITICAL_AT:
+                st.session_state.temp += random.uniform(-0.15, 0.35)
+            elif st.session_state.temp > SAFE_MAX:
+                st.session_state.temp += random.uniform(-0.25, 0.18)
             else:
-                st.markdown(
-                    '<div style="display:inline-block;background:#0a1a0a;border:1px solid #1a3a1a;'
-                    'border-radius:8px;padding:4px 12px;font-size:0.73rem;color:#4CAF50;margin-bottom:0.5rem;">'
-                    '🟢 Gemini AI Online</div>', unsafe_allow_html=True)
+                st.session_state.temp = max(min(st.session_state.temp + random.uniform(-0.08, 0.18), 4.5), 3.5)
 
-        # Alert banner
-        if is_crit and st.session_state.rerouted:
+        st.session_state.temp = round(min(max(st.session_state.temp, 2.0), TEMP_CEIL), 1)
+        temp    = st.session_state.temp
+        is_crit = temp > CRITICAL_AT
+        is_warn = temp > SAFE_MAX
+
+        if is_warn or is_crit:
+            st.session_state.minutes_above_safe += 1/60
+        else:
+            st.session_state.minutes_above_safe = 0
+
+        st.session_state.temp_history.append(temp)
+        st.session_state.temp_history = st.session_state.temp_history[-20:]
+
+        # ── Rerouting ──
+        if is_crit and not st.session_state.rerouted:
+            cs = nearest_cold_storage(lat, lon)
+            new_route, new_dist = fetch_osrm(lon, lat, cs["lon"], cs["lat"])
+            st.session_state.rerouted        = True
+            st.session_state.reroute_target  = cs
+            st.session_state.active_route    = new_route
+            st.session_state.waypoint_idx    = 0
+            st.session_state.total_dist      = new_dist
+            st.session_state.dist_covered    = 0.0
+            dist_to = haversine(lat, lon, cs["lat"], cs["lon"])
+            st.session_state.warning_log.insert(0, {
+                "icon": "🚨", "time": time.strftime("%H:%M:%S"),
+                "msg": f"CRITICAL {temp}°C — Rerouted to {cs['name']}, {cs['city']}"
+            })
+            voice(
+                f"Warning! Cargo temperature critical at {temp} degrees. "
+                f"Rerouting to {cs['name']} in {cs['city']}. "
+                f"Distance: {dist_to:.0f} kilometres."
+            )
+
+        elif is_warn and not st.session_state.warn_alerted:
+            st.session_state.warn_alerted = True
+            st.session_state.warning_log.insert(0, {
+                "icon": "⚠️", "time": time.strftime("%H:%M:%S"),
+                "msg": f"WARNING {temp}°C — Compressor activated"
+            })
+            voice(f"Temperature warning. Cargo at {temp} degrees. Compressor activated.")
+
+        if not is_warn:
+            st.session_state.warn_alerted = False
+
+        # ── Auto Gemini trigger — non-blocking, fires in background thread ──
+        now_ts = time.time()
+        if (is_warn or is_crit) and (now_ts - st.session_state.gemini_last_run > 120):
+            gemini_analyze_async(
+                temp, st.session_state.temp_history,
+                st.session_state.speed_kmh,
+                st.session_state.dist_covered,
+                dist_remaining, is_crit, is_warn,
+                st.session_state.rerouted,
+                st.session_state.reroute_target,
+                st.session_state.minutes_above_safe,
+            )
+            st.session_state.gemini_last_run = now_ts
+
+        # ── Collect result if thread finished (non-blocking check) ──
+        ready = gemini_collect_result()
+        if ready:
+
+            # 🚨 FULL OVERRIDE IN CRITICAL (safety-first)
+            if is_crit:
+                ready = {
+                    "temp_prediction": "Temperature will continue rising if not controlled",
+                    "route_risk": "Route unsafe due to critical temperature",
+                    "cargo_damage": "High probability of vaccine spoilage",
+                    "driver_message": "Immediate cooling or stop required",
+                    "severity": "CRITICAL",
+                }
+
+            elif is_warn and ready.get("severity") == "LOW":
+                # Promote overly-low severity to MEDIUM for warnings
+                ready["severity"] = "MEDIUM"
+
+            st.session_state.warning_log.insert(0, {
+                "icon"  : "🧠",
+                "time"  : time.strftime("%H:%M:%S"),
+                "msg"   : f"[AI] {ready['driver_message']}",
+                "ai"    : True,
+                "result": ready,
+            })
+        elif st.session_state.get("gemini_last_error"):
+            err = st.session_state.pop("gemini_last_error")
+            # Only show error if we have never had a successful result
+            # (avoids showing stale errors from before key was entered)
+            if not st.session_state.get("gemini_last_good"):
+                st.session_state.warning_log.insert(0, {
+                    "icon": "⚠️",
+                    "time": time.strftime("%H:%M:%S"),
+                    "msg" : f"[AI Error] {err[:80]}",
+                    "ai"  : False,
+                })
+
+        # ── Dot color ──
+        dot_color = [255, 40, 40, 255] if is_crit else ([255, 165, 0, 255] if is_warn else [0, 220, 100, 255])
+
+        # ── Map layers ──
+        layers = []
+
+        # Original planned route
+        orig_line = [[lo, la] for la, lo in st.session_state.main_route]
+        layers.append(pdk.Layer("PathLayer",
+            data=[{"path": orig_line}], get_path="path",
+            get_color=[40, 80, 200, 70] if st.session_state.rerouted else [0, 140, 255, 130],
+            width_scale=14, width_min_pixels=3))
+
+        # Reroute path
+        if st.session_state.rerouted:
+            rr_line = [[lo, la] for la, lo in st.session_state.active_route]
+            layers.append(pdk.Layer("PathLayer",
+                data=[{"path": rr_line}], get_path="path",
+                get_color=[255, 110, 0, 220], width_scale=16, width_min_pixels=4))
+
+        # Cold storage dots
+        layers.append(pdk.Layer("ScatterplotLayer",
+            data=[{"lat": c["lat"], "lon": c["lon"], "name": c["name"], "city": c["city"]} for c in COLD_STORAGES],
+            get_position="[lon, lat]", get_color=[0, 200, 255, 180],
+            get_radius=500, radiusMinPixels=9, pickable=True))
+
+        # Reroute target glow
+        if st.session_state.rerouted and st.session_state.reroute_target:
             t = st.session_state.reroute_target
-            st.error(f"🚨 CRITICAL BREACH — {temp}°C  ·  REROUTING TO **{t['name'].upper()}**, {t['city'].upper()} 🧊")
-        elif is_warn:
-            st.warning(f"⚠️ WARNING — Temperature rising: **{temp}°C**  ·  Compressor activated")
+            layers.append(pdk.Layer("ScatterplotLayer",
+                data=[{"lat": t["lat"], "lon": t["lon"]}],
+                get_position="[lon, lat]", get_color=[255, 50, 50, 60],
+                get_radius=1400, radiusMinPixels=22))
 
-        # ── ROW 1: 6 metric cards ──
-        m1, m2, m3, m4, m5, m6 = st.columns(6)
-        m1.metric("📦 Cargo",       "Vaccines")
-        m2.metric("🌡 Temperature", f"{temp}°C",
-                  delta=f"{temp - 4.0:+.1f}°C baseline", delta_color="inverse")
-        m3.metric("🔴 Status",      "CRITICAL" if is_crit else ("WARNING" if is_warn else "NOMINAL"))
-        m4.metric("🏎 Speed",       f"{st.session_state.speed_kmh:.0f} km/h")
-        m5.metric("📏 Covered",     f"{st.session_state.dist_covered:.1f} km")
-        m6.metric("⏱ ETA",
-                  "REROUTING 🧊" if st.session_state.rerouted else f"{eta_min:.0f} min")
+        # Truck
+        layers.append(pdk.Layer("ScatterplotLayer",
+            data=[{"lat": lat, "lon": lon}],
+            get_position="[lon, lat]", get_color=dot_color,
+            get_radius=320, radiusMinPixels=10, radiusMaxPixels=20))
 
-        st.markdown("<div style='margin:0.6rem 0;'></div>", unsafe_allow_html=True)
+        # ─────────────────────────────────────────
+        #  RENDER
+        # ─────────────────────────────────────────
+        with placeholder.container():
 
-        # ── ROW 2: Map (wide) ──
-        st.pydeck_chart(pdk.Deck(
-            layers=layers,
-            initial_view_state=pdk.ViewState(
-                latitude=lat, longitude=lon,
-                zoom=11, pitch=52, bearing=0),
-            map_style="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-            tooltip={"text": "📍 {name}\n{city}"},
-        ))
-
-        st.markdown("<div style='margin:0.6rem 0;'></div>", unsafe_allow_html=True)
-
-        # ── ROW 3: Speed chart | Temp chart | Event log ──
-        ch1, ch2, ch3 = st.columns([1, 1, 1])
-
-        with ch1:
-            st.markdown('<div class="fg-card"><div class="fg-card-title">⚡ Live Speed (km/h)</div>', unsafe_allow_html=True)
-            st.line_chart({"Speed": st.session_state.speed_history}, height=110)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with ch2:
-            st.markdown('<div class="fg-card"><div class="fg-card-title">🌡 Temperature History (°C)</div>', unsafe_allow_html=True)
-            st.line_chart({"Temp": st.session_state.temp_history}, height=110)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with ch3:
-            st.markdown('<div class="fg-card"><div class="fg-card-title">📋 Event Log + AI Analysis</div>', unsafe_allow_html=True)
-            if st.session_state.warning_log:
-                for ev in st.session_state.warning_log[:5]:
-                    is_ai = ev.get("ai", False)
-                    color = "#4FC3F7" if is_ai else ("#FF4B4B" if "CRITICAL" in ev["msg"] else "#FFA500")
+            # ── Gemini key input (only if not set via env) ──
+            if not GEMINI_API_KEY_ENV:
+                if not st.session_state.get("gemini_api_key"):
+                    key_col, btn_col = st.columns([4, 1])
+                    with key_col:
+                        entered_key = st.text_input(
+                            "🔑 Gemini API Key", type="password",
+                            placeholder="Paste your key from aistudio.google.com",
+                            label_visibility="collapsed",
+                            key="gemini_key_input",
+                        )
+                    with btn_col:
+                        if st.button("Save Key", key="btn_save_key") and entered_key:
+                            st.session_state["gemini_api_key"] = entered_key
+                            st.query_params["gk"] = entered_key
                     st.markdown(
-                        f'<div style="background:#111; border-left:3px solid {color}; '
-                        f'border-radius:6px; padding:7px 10px; margin-bottom:6px;">'
-                        f'<span style="font-size:0.62rem; color:#555;">{ev["time"]}</span><br>'
-                        f'<span style="font-size:0.76rem; color:#DDD;">{ev["icon"]} {ev["msg"]}</span>'
-                        f'</div>',
-                        unsafe_allow_html=True
+                        '<div style="font-size:0.7rem;color:#555;margin-bottom:0.5rem;">'
+                        'Get free key at <a href="https://aistudio.google.com" style="color:#4FC3F7;">aistudio.google.com</a>'
+                        '</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(
+                        """
+                        <div style="display:inline-block;background:#0a1a0a;border:1px solid #1a3a1a;
+                        border-radius:8px;padding:4px 12px;font-size:0.73rem;color:#4CAF50;margin-bottom:0.5rem;">
+                        🟢 Gemini AI Online</div>
+                        """,
+                        unsafe_allow_html=True,
                     )
-                    if is_ai and ev.get("result"):
-                        r = ev["result"]
-                        sev_color = "#FF4B4B" if r["severity"] == "CRITICAL" else ("#FFA500" if r["severity"] in ("HIGH","MEDIUM") else "#4FC3F7")
+
+            # ── Service status badges (bridge + simulator) ──
+            bridge_status = False
+            sim_status = False
+            try:
+                h = requests.get("http://127.0.0.1:5000/health", timeout=0.6)
+                bridge_status = (h.status_code == 200)
+            except Exception:
+                bridge_status = False
+            try:
+                l = requests.get("http://127.0.0.1:5000/latest", timeout=0.6)
+                sim_status = (l.status_code == 200)
+            except Exception:
+                sim_status = False
+
+            bridge_bg = "#4CAF50" if bridge_status else "#444"
+            sim_bg = "#4CAF50" if sim_status else "#444"
+            status_html = (
+                f'<div style="display:inline-block;margin-left:10px;">'
+                f'<span style="display:inline-block;background:{bridge_bg};color:#000;padding:4px 8px;border-radius:8px;font-size:0.72rem;margin-right:6px;">Bridge</span>'
+                f'<span style="display:inline-block;background:{sim_bg};color:#000;padding:4px 8px;border-radius:8px;font-size:0.72rem;">Simulator</span>'
+                '</div>'
+            )
+            st.markdown(status_html, unsafe_allow_html=True)
+
+            # Alert banner
+            if is_crit and st.session_state.rerouted:
+                t = st.session_state.reroute_target
+                st.error(f"🚨 CRITICAL BREACH — {temp}°C  ·  REROUTING TO **{t['name'].upper()}**, {t['city'].upper()} 🧊")
+            elif is_warn:
+                st.warning(f"⚠️ WARNING — Temperature rising: **{temp}°C**  ·  Compressor activated")
+
+            # ── ROW 1: 6 metric cards ──
+            m1, m2, m3, m4, m5, m6 = st.columns(6)
+            m1.metric("📦 Cargo",       "Vaccines")
+            m2.metric("🌡 Temperature", f"{temp}°C",
+                      delta=f"{temp - 4.0:+.1f}°C baseline", delta_color="inverse")
+            m3.metric("🔴 Status",      "CRITICAL" if is_crit else ("WARNING" if is_warn else "NOMINAL"))
+            m4.metric("🏎 Speed",       f"{st.session_state.speed_kmh:.0f} km/h")
+            m5.metric("📏 Covered",     f"{st.session_state.dist_covered:.1f} km")
+            m6.metric("⏱ ETA",
+                      "REROUTING 🧊" if st.session_state.rerouted else f"{eta_min:.0f} min")
+
+            st.markdown("<div style='margin:0.6rem 0;'></div>", unsafe_allow_html=True)
+
+            # ── ROW 2: Map (wide) ──
+            st.pydeck_chart(pdk.Deck(
+                layers=layers,
+                initial_view_state=pdk.ViewState(
+                    latitude=lat, longitude=lon,
+                    zoom=11, pitch=52, bearing=0),
+                map_style="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+                tooltip={"text": "📍 {name}\n{city}"},
+            ))
+
+            st.markdown("<div style='margin:0.6rem 0;'></div>", unsafe_allow_html=True)
+
+            # ── ROW 3: Speed chart | Temp chart | Event log ──
+            ch1, ch2, ch3 = st.columns([1, 1, 1])
+
+            with ch1:
+                st.markdown('<div class="fg-card"><div class="fg-card-title">⚡ Live Speed (km/h)</div>', unsafe_allow_html=True)
+                st.line_chart({"Speed": st.session_state.speed_history}, height=110)
+                st.markdown('</div>', unsafe_allow_html=True)
+
+            with ch2:
+                st.markdown('<div class="fg-card"><div class="fg-card-title">🌡 Temperature History (°C)</div>', unsafe_allow_html=True)
+                st.line_chart({"Temp": st.session_state.temp_history}, height=110)
+                st.markdown('</div>', unsafe_allow_html=True)
+
+            with ch3:
+                st.markdown('<div class="fg-card"><div class="fg-card-title">📋 Event Log + AI Analysis</div>', unsafe_allow_html=True)
+                if st.session_state.warning_log:
+                    for ev in st.session_state.warning_log[:5]:
+                        is_ai = ev.get("ai", False)
+                        color = "#4FC3F7" if is_ai else ("#FF4B4B" if "CRITICAL" in ev["msg"] else "#FFA500")
                         st.markdown(
-                            f'<div style="background:#0A0A0A; border:1px solid #1A1A1A; border-radius:6px; '
-                            f'padding:8px 10px; margin:-2px 0 6px 0; font-size:0.72rem; line-height:1.6;">'
-                            f'<span style="color:{sev_color}; font-weight:700; letter-spacing:0.06em;">■ {r["severity"]}</span><br>'
-                            f'<span style="color:#888;">🌡 Prediction: </span><span style="color:#CCC;">{r["temp_prediction"]}</span><br>'
-                            f'<span style="color:#888;">🛣 Route: </span><span style="color:#CCC;">{r["route_risk"]}</span><br>'
-                            f'<span style="color:#888;">📦 Cargo: </span><span style="color:#CCC;">{r["cargo_damage"]}</span>'
+                            f'<div style="background:#111; border-left:3px solid {color}; '
+                            f'border-radius:6px; padding:7px 10px; margin-bottom:6px;>'
+                            f'<span style="font-size:0.62rem; color:#555;">{ev["time"]}</span><br>'
+                            f'<span style="font-size:0.76rem; color:#DDD;">{ev["icon"]} {ev["msg"]}</span>'
                             f'</div>',
                             unsafe_allow_html=True
                         )
-            else:
-                st.markdown(
-                    '<div style="background:#111; border-left:3px solid #1A6E3C; border-radius:6px; '
-                    'padding:7px 10px;"><span style="font-size:0.78rem; color:#666;">✅ All systems nominal</span></div>',
-                    unsafe_allow_html=True
-                )
-            st.markdown('</div>', unsafe_allow_html=True)
+                        if is_ai and ev.get("result"):
+                            r = ev["result"]
+                            sev_color = "#FF4B4B" if r["severity"] == "CRITICAL" else ("#FFA500" if r["severity"] in ("HIGH","MEDIUM") else "#4FC3F7")
+                            st.markdown(
+                                f'<div style="background:#0A0A0A; border:1px solid #1A1A1A; border-radius:6px; '
+                                f'padding:8px 10px; margin:-2px 0 6px 0; font-size:0.72rem; line-height:1.6;>'
+                                f'<span style="color:{sev_color}; font-weight:700; letter-spacing:0.06em;">■ {r["severity"]}</span><br>'
+                                f'<span style="color:#888;">🌡 Prediction: </span><span style="color:#CCC;">{r["temp_prediction"]}</span><br>'
+                                f'<span style="color:#888;">🛣 Route: </span><span style="color:#CCC;">{r["route_risk"]}</span><br>'
+                                f'<span style="color:#888;">📦 Cargo: </span><span style="color:#CCC;">{r["cargo_damage"]}</span>'
+                                f'</div>',
+                                unsafe_allow_html=True
+                            )
+                else:
+                    st.markdown(
+                        '<div style="background:#111; border-left:3px solid #1A6E3C; border-radius:6px; '
+                        'padding:7px 10px;"><span style="font-size:0.78rem; color:#666;">✅ All systems nominal</span></div>',
+                        unsafe_allow_html=True
+                    )
+                st.markdown('</div>', unsafe_allow_html=True)
 
-        # ── ROW 4: Footer info ──
-        st.markdown("<div style='margin:0.4rem 0;'></div>", unsafe_allow_html=True)
-        f1, f2, f3, f4 = st.columns(4)
-        dest = st.session_state.reroute_target["city"] if st.session_state.rerouted else "Ahmedabad"
-        f1.caption(f"📍 {lat:.5f}°N  {lon:.5f}°E")
-        f2.caption(f"🏁 Destination: {dest}")
-        f3.caption(f"🛣 {'NH48 → Emergency Reroute' if st.session_state.rerouted else 'NH48  Vadodara → Ahmedabad'}")
-        f4.caption(f"📊 Waypoint {st.session_state.waypoint_idx} / {len(route)}")
+            # ── ROW 4: Footer info ──
+            st.markdown("<div style='margin:0.4rem 0;'></div>", unsafe_allow_html=True)
+            f1, f2, f3, f4 = st.columns(4)
+            dest = st.session_state.reroute_target["city"] if st.session_state.rerouted else "Ahmedabad"
+            f1.caption(f"📍 {lat:.5f}°N  {lon:.5f}°E")
+            f2.caption(f"🏁 Destination: {dest}")
+            f3.caption(f"🛣 {'NH48 → Emergency Reroute' if st.session_state.rerouted else 'NH48  Vadodara → Ahmedabad'}")
+            f4.caption(f"📊 Waypoint {st.session_state.waypoint_idx} / {len(route)}")
 
-    time.sleep(1)
+        time.sleep(1)
