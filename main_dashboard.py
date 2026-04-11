@@ -607,6 +607,7 @@ while True:
                         "🔑 Gemini API Key", type="password",
                         placeholder="Paste your key from aistudio.google.com",
                         label_visibility="collapsed",
+                        key="gemini_key_input",
                     )
                 with btn_col:
                     if st.button("Save Key", key="btn_save_key") and entered_key:
