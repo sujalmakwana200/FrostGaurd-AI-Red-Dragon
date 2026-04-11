@@ -183,7 +183,7 @@ MIT License — free to use, modify, and distribute.
 [![Rohit](https://img.shields.io/badge/Rohit-Intern-orange)](https://github.com/rohit)
 [![Sharang](https://img.shields.io/badge/Sharang-QA-purple)](https://github.com/sharang)
 [![Dheeraj](https://img.shields.io/badge/Dheeraj-Intern-orange)](https://github.com/dheeraj)
-[![Alanjohn](https://img.shields.io/badge/Alanjohn-Business_SPOC-yellow)](https://github.com/dev-alanjohn)
+[![Alanjohn](https://img.shields.io/badge/Alanjohn-Business_SPOC-red)](https://github.com/dev-alanjohn)
 
 <div align="center">
   Built with love by Team Red Dragons 🐉
