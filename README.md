@@ -165,7 +165,7 @@ frostguard-ai/
 | **Ritik** | Backend — Bridge listener, telemetry pipeline, Flask server, CSV logging |
 | **Rohit** | Intern — Sensor simulator, OSRM route integration, Discord webhook alerts |
 | **Dheeraj** | Intern — Development support and contributions |
-| **Sharang** | QA — Testing, bug reporting, edge case validation, quality assurance |
+| **Sharang** | Product Owner — Defines product vision, manages backlog, prioritizes features |
 | **Alanjohn** | Business SPOC — Communication hub, requirement gathering, issue resolution, progress tracking |
 
 ---
@@ -181,7 +181,7 @@ MIT License — free to use, modify, and distribute.
 [![Sujal](https://img.shields.io/badge/Sujal-UI%2FUX-blue)](https://github.com/sujalmakwana200)
 [![Ritik](https://img.shields.io/badge/Ritik-Backend-green)](https://github.com/ritikraushan812-rgb)
 [![Rohit](https://img.shields.io/badge/Rohit-Intern-orange)](https://github.com/rohit)
-[![Sharang](https://img.shields.io/badge/Sharang-QA-purple)](https://github.com/sharang)
+[![Sharang](https://img.shields.io/badge/Sharang-Product_Owner-purple)](https://github.com/sharang)
 [![Dheeraj](https://img.shields.io/badge/Dheeraj-Intern-orange)](https://github.com/dheeraj)
 [![Alanjohn](https://img.shields.io/badge/Alanjohn-Business_SPOC-red)](https://github.com/dev-alanjohn)
 
