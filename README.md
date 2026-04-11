@@ -167,6 +167,7 @@ frostguard-ai/
 | **Dheeraj** | Intern — Development support and contributions |
 | **Sharang** | Product Owner — Defines product vision, manages backlog, prioritizes features |
 | **Alanjohn** | Business SPOC — Communication hub, requirement gathering, issue resolution, progress tracking |
+| **Danish** | QA — Testing, bug reporting, validation, quality assurance |
 
 ---
 
