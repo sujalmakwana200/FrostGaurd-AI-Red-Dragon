@@ -534,7 +534,7 @@ if True:
     else:
         # ── Animation always follows main_route (NH48 original path) ──
         # Real GPS from bridge overrides position for WARNING/CRITICAL/rerouted
-        anim_route = st.session_state.main_route
+        anim_route = st.session_state.active_route
         idx        = st.session_state.waypoint_idx
 
         # ── Poll bridge for real telemetry FIRST ──
