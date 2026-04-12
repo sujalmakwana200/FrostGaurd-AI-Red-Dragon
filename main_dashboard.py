@@ -917,7 +917,8 @@ if True:
         f1.caption(f"📍 {lat:.5f}°N  {lon:.5f}°E")
         f2.caption(f"🏁 Destination: {dest}")
         f3.caption(f"🛣 {'NH48 → Emergency Reroute' if st.session_state.rerouted else 'NH48  Vadodara → Ahmedabad'}")
-        f4.caption(f"📊 Waypoint {st.session_state.waypoint_idx} / {len(route)}")
+       
+        f4.caption(f"📊 Waypoint {st.session_state.waypoint_idx} / {len(st.session_state.active_route)}")
 
 # ─────────────────────────────────────────────────────────────
 #  TICK — one frame per second using session_state pattern
