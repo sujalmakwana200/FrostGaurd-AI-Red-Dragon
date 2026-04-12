@@ -537,29 +537,28 @@ if True:
             lat, lon = route[idx]
             st.session_state.waypoint_idx += 1
 
-            # Try to poll local bridge for latest telemetry (non-fatal). If available,
-            # prefer telemetry temperature and coords and skip local simulation updates.
+            # Poll bridge for real telemetry from simulator.
+            # If bridge is live, override temp AND coords with real values.
+            # Also pull status directly so rerouting matches simulator's state.
             telemetry_used = False
+            tele_status    = None
             try:
                 resp = requests.get("http://127.0.0.1:5000/latest", timeout=0.6)
                 if resp.status_code == 200:
                     tele = resp.json()
-                    # update temperature if provided
                     if "temperature" in tele:
-                        try:
-                            st.session_state.temp = float(tele["temperature"])
-                            telemetry_used = True
-                        except Exception:
-                            pass
-                    # use telemetry coords for display if present
+                        st.session_state.temp = float(tele["temperature"])
+                        telemetry_used = True
                     if "lat" in tele and "lng" in tele:
-                        try:
-                            lat = float(tele["lat"])
-                            lon = float(tele["lng"])
-                        except Exception:
-                            pass
+                        lat = float(tele["lat"])
+                        lon = float(tele["lng"])
+                        # Also update the current waypoint to match real GPS
+                        # so the truck dot on the rerouted path stays accurate
+                        st.session_state.last_real_lat = lat
+                        st.session_state.last_real_lon = lon
+                    if "status" in tele:
+                        tele_status = tele["status"]   # "SAFE" / "WARNING" / "CRITICAL"
             except Exception:
-                # bridge may not be running — fall back to internal sim
                 telemetry_used = False
 
             # ── Simulated speed (smooth, realistic) ──
@@ -593,8 +592,13 @@ if True:
 
             st.session_state.temp = round(min(max(st.session_state.temp, 2.0), TEMP_CEIL), 1)
             temp    = st.session_state.temp
-            is_crit = temp > CRITICAL_AT
-            is_warn = temp > SAFE_MAX
+            # Use simulator's own status when available — more accurate
+            if tele_status:
+                is_crit = tele_status == "CRITICAL"
+                is_warn = tele_status in ("WARNING", "CRITICAL")
+            else:
+                is_crit = temp > CRITICAL_AT
+                is_warn = temp > SAFE_MAX
 
             if is_warn or is_crit:
                 st.session_state.minutes_above_safe += 1/60
@@ -606,8 +610,11 @@ if True:
 
             # ── Rerouting ──
             if is_crit and not st.session_state.rerouted:
-                cs = nearest_cold_storage(lat, lon)
-                new_route, new_dist = fetch_osrm(lon, lat, cs["lon"], cs["lat"])
+                # Use real GPS from telemetry if available for accurate reroute
+                reroute_lat = st.session_state.get("last_real_lat", lat)
+                reroute_lon = st.session_state.get("last_real_lon", lon)
+                cs = nearest_cold_storage(reroute_lat, reroute_lon)
+                new_route, new_dist = fetch_osrm(reroute_lon, reroute_lat, cs["lon"], cs["lat"])
                 st.session_state.rerouted        = True
                 st.session_state.reroute_target  = cs
                 st.session_state.active_route    = new_route
