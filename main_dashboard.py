@@ -532,58 +532,60 @@ if True:
             msg = f"✅ Arrived at **{t['name']}**, {t['city']} — Cargo secured 🧊" if t else "✅ Arrived in **Ahmedabad** — Journey complete 🎉"
             st.success(msg)
     else:
-        route = st.session_state.active_route
-        idx   = st.session_state.waypoint_idx
+        # ── Animation always follows main_route (NH48 original path) ──
+        # Real GPS from bridge overrides position for WARNING/CRITICAL/rerouted
+        anim_route = st.session_state.main_route
+        idx        = st.session_state.waypoint_idx
 
-        # Journey complete — mark and render, then stop auto-refresh by setting session flag
-        if idx >= len(route):
-            st.session_state["journey_complete"] = True
-            with placeholder.container():
-                t = st.session_state.reroute_target
-                msg = f"✅ Arrived at **{t['name']}**, {t['city']} — Cargo secured 🧊" if t else "✅ Arrived in **Ahmedabad** — Journey complete 🎉"
-                st.success(msg)
-    
-        else:
-
-            # ── Two separate positions ──
-            # anim_lat/lon  = dashboard's internal waypoint (smooth animation)
-            # real_lat/lon  = real GPS from simulator via bridge (rerouting + CRITICAL)
-            anim_lat, anim_lon = route[idx]
-            st.session_state.waypoint_idx += 1
-
-            # Start with animation position — overridden by real GPS if available
-            lat, lon = anim_lat, anim_lon
-            real_lat, real_lon = anim_lat, anim_lon
-
-            # Poll bridge for real telemetry
+        # ── Poll bridge for real telemetry FIRST ──
+        real_lat       = st.session_state.get("last_real_lat", START_LAT)
+        real_lon       = st.session_state.get("last_real_lon", START_LON)
+        telemetry_used = False
+        tele_status    = None
+        try:
+            resp = requests.get("http://127.0.0.1:5000/latest", timeout=0.6)
+            if resp.status_code == 200:
+                tele = resp.json()
+                if "temperature" in tele:
+                    st.session_state.temp = float(tele["temperature"])
+                    telemetry_used = True
+                if "lat" in tele and "lng" in tele:
+                    real_lat = float(tele["lat"])
+                    real_lon = float(tele["lng"])
+                    st.session_state.last_real_lat = real_lat
+                    st.session_state.last_real_lon = real_lon
+                if "status" in tele:
+                    tele_status = tele["status"]
+        except Exception:
             telemetry_used = False
-            tele_status    = None
-            try:
-                resp = requests.get("http://127.0.0.1:5000/latest", timeout=0.6)
-                if resp.status_code == 200:
-                    tele = resp.json()
-                    if "temperature" in tele:
-                        st.session_state.temp = float(tele["temperature"])
-                        telemetry_used = True
-                    if "lat" in tele and "lng" in tele:
-                        real_lat = float(tele["lat"])
-                        real_lon = float(tele["lng"])
-                        st.session_state.last_real_lat = real_lat
-                        st.session_state.last_real_lon = real_lon
-                    if "status" in tele:
-                        tele_status = tele["status"]
-            except Exception:
-                telemetry_used = False
 
-            # ── Position logic ──
-            # SAFE + bridge running  → smooth animation on NH48
-            # WARNING/CRITICAL       → real GPS from simulator
-            # Rerouted               → real GPS only (dot follows actual truck, not internal waypoints)
-            if st.session_state.rerouted:
-                # Stop advancing internal waypoints — real GPS drives everything
-                st.session_state.waypoint_idx -= 1   # undo the increment above
-                lat, lon = real_lat, real_lon
-            elif tele_status in ("CRITICAL", "WARNING"):
+        # ── Journey complete check ──
+        if st.session_state.rerouted and st.session_state.reroute_target:
+            # Rerouted: complete when within 0.5km of cold storage
+            t = st.session_state.reroute_target
+            if haversine(real_lat, real_lon, t["lat"], t["lon"]) < 0.5:
+                st.session_state["journey_complete"] = True
+        elif idx >= len(anim_route):
+            st.session_state["journey_complete"] = True
+
+        if st.session_state.get("journey_complete", False):
+            with placeholder.container():
+                t   = st.session_state.reroute_target
+                msg = (f"✅ Arrived at **{t['name']}**, {t['city']} — Cargo secured 🧊"
+                       if t else "✅ Arrived in **Ahmedabad** — Journey complete 🎉")
+                st.success(msg)
+        else:
+            # Advance animation on original NH48 route
+            if idx < len(anim_route):
+                anim_lat, anim_lon = anim_route[idx]
+                st.session_state.waypoint_idx += 1
+            else:
+                anim_lat, anim_lon = real_lat, real_lon
+
+            # ── Final truck dot position ──
+            # Rerouted or WARNING/CRITICAL → real GPS (follows actual truck)
+            # SAFE normal               → animation (smooth on NH48)
+            if st.session_state.rerouted or tele_status in ("CRITICAL", "WARNING"):
                 lat, lon = real_lat, real_lon
             else:
                 lat, lon = anim_lat, anim_lon
