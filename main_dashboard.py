@@ -453,15 +453,27 @@ st.markdown("""
 # ─────────────────────────────────────────────────────────────
 #  RESTORE KEY FROM QUERY PARAMS (runs before render)
 # ─────────────────────────────────────────────────────────────
-if not GEMINI_API_KEY_ENV and not st.session_state.get('gemini_api_key'):
-    saved = st.query_params.get('gk', '')
-    if saved:
-        st.session_state['gemini_api_key'] = saved
+# Restore key from query params on every run (survives st.rerun)
+if not GEMINI_API_KEY_ENV:
+    saved = st.query_params.get("gk", "")
+    if saved and not st.session_state.get("gemini_api_key"):
+        st.session_state["gemini_api_key"] = saved
 
 #  CONTROLS ROW  (no sidebar — everything inline)
 # ─────────────────────────────────────────────────────────────
 ctrl1, ctrl2, ctrl3, ctrl4 = st.columns([1, 1, 1, 5])
-inject_failure = ctrl1.button("🚨 Compressor Fail", key="btn_fail")
+_fail_clicked  = ctrl1.button("🚨 Compressor Fail", key="btn_fail")
+inject_failure = _fail_clicked
+# Send command to bridge so simulator picks it up
+if _fail_clicked:
+    try:
+        requests.post(
+            "http://127.0.0.1:5000/command",
+            json={"command": "compressor_fail"},
+            timeout=2,
+        )
+    except Exception:
+        pass
 reset_btn      = ctrl2.button("🔄 Reset", key="btn_reset")
 ask_ai_btn     = ctrl3.button("🧠 Ask Gemini", key="btn_gemini")
 
