@@ -16,40 +16,60 @@ from google.genai import types
 #  AUTO-LAUNCH bridge.py + sensor_simulator.py as background
 #  processes — runs all 3 files when Streamlit Cloud starts
 # ─────────────────────────────────────────────────────────────
+def _bridge_online():
+    """Returns True if bridge is already up and healthy."""
+    try:
+        return requests.get("http://127.0.0.1:5000/health", timeout=2).status_code == 200
+    except Exception:
+        return False
+
+
+def _wait_for_bridge(max_wait=10):
+    """Polls /health until bridge responds or timeout. Returns True if online."""
+    for _ in range(max_wait):
+        if _bridge_online():
+            return True
+        time.sleep(1)
+    return False
+
+
 def launch_background_services():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir       = os.path.dirname(os.path.abspath(__file__))
     bridge_path    = os.path.join(base_dir, "bridge.py")
     simulator_path = os.path.join(base_dir, "sensor_simulator.py")
 
-    # Check if bridge is already running by pinging /health
+    # ── Step 1: Start bridge if not already running ──
+    if not _bridge_online():
+        if os.path.exists(bridge_path):
+            try:
+                log = open(os.path.join(base_dir, "bridge.log"), "ab")
+                subprocess.Popen(
+                    [sys.executable, bridge_path],
+                    stdout=log, stderr=log,
+                )
+            except Exception:
+                pass
+
+        # Wait up to 10s for bridge to come online before starting simulator
+        bridge_ready = _wait_for_bridge(max_wait=10)
+        if not bridge_ready:
+            return  # Bridge failed to start — don't launch simulator into void
+    
+    # ── Step 2: Start simulator only after bridge is confirmed online ──
+    # Check simulator isn't already sending (bridge /latest returns data)
     try:
-        resp = requests.get("http://127.0.0.1:5000/health", timeout=2)
-        if resp.status_code == 200:
-            return  # Already running, skip launch
+        r = requests.get("http://127.0.0.1:5000/latest", timeout=1)
+        if r.status_code == 200:
+            return  # Simulator already running and sending data
     except Exception:
-        pass  # Not running yet — launch it
+        pass  # No data yet — start simulator
 
-    # Launch bridge.py — log stdout/stderr to files so presentation stays clean
-    if os.path.exists(bridge_path):
-        try:
-            bridge_log = open(os.path.join(base_dir, "bridge.log"), "ab")
-            subprocess.Popen(
-                [sys.executable, bridge_path],
-                stdout=bridge_log,
-                stderr=bridge_log,
-            )
-            time.sleep(1.5)  # Give Flask a moment to bind to port 5000
-        except Exception:
-            pass
-
-    # Launch sensor_simulator.py — capture logs to file
     if os.path.exists(simulator_path):
         try:
-            sim_log = open(os.path.join(base_dir, "simulator.log"), "ab")
+            log = open(os.path.join(base_dir, "simulator.log"), "ab")
             subprocess.Popen(
                 [sys.executable, simulator_path],
-                stdout=sim_log,
-                stderr=sim_log,
+                stdout=log, stderr=log,
             )
         except Exception:
             pass
