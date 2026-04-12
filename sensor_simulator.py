@@ -76,6 +76,14 @@ def reset_command():
 print("🐉 Red Dragons Simulator Online...")
 print("📡 Fetching real road route...\n")
 
+# Register PID with bridge so it can kill us on reset
+import os as _os
+try:
+    requests.post(f"{BRIDGE_URL}/register_sim", json={"pid": _os.getpid()}, timeout=3)
+    print(f"✅ Registered with bridge (PID {_os.getpid()})")
+except Exception:
+    print("⚠️  Could not register PID with bridge")
+
 ROUTE        = fetch_route()
 current_temp = 5.0
 idx          = 0
