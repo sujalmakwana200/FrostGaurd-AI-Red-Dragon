@@ -593,11 +593,17 @@ if True:
                 lat, lon = anim_lat, anim_lon
 
            # ── Simulated speed (smooth, realistic) ──
-            if is_crit or tele_status == "CRITICAL":
+           # ── Simulated speed (smooth, realistic) ──
+            if tele_status == "CRITICAL" or st.session_state.temp > CRITICAL_AT:
                 # Demo purposes only: Truck speeds up during crisis
                 target_speed  = BASE_SPEED + 25.0 + random.uniform(-SPEED_NOISE, SPEED_NOISE) 
             else:
                 target_speed  = BASE_SPEED + random.uniform(-SPEED_NOISE, SPEED_NOISE)
+            
+            current_speed = st.session_state.speed_kmh
+            # Smooth toward target — no sudden jumps
+            new_speed = current_speed + (target_speed - current_speed) * 0.08
+            st.session_state.speed_kmh = round(new_speed, 1)
             # Smooth toward target — no sudden jumps
             new_speed = current_speed + (target_speed - current_speed) * 0.08
             st.session_state.speed_kmh = round(new_speed, 1)
