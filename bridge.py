@@ -9,8 +9,19 @@ app = Flask(__name__)
 LATEST = None
 
 # Store pending command for simulator to poll
-# e.g. {"command": "compressor_fail"} or {"command": "normal"}
 PENDING_COMMAND = {"command": "normal"}
+
+# Track simulator process pid so we can kill it on reset
+SIM_PID = None
+
+
+@app.route("/register_sim", methods=["POST"])
+def register_sim():
+    """Simulator calls this on startup to register its PID."""
+    global SIM_PID
+    data = request.json or {}
+    SIM_PID = data.get("pid")
+    return {"status": "registered", "pid": SIM_PID}, 200
 
 # ── Your Discord webhook (optional — alerts sent on CRITICAL) ──
 WEBHOOK_URL = os.environ.get(
@@ -94,6 +105,28 @@ def set_command():
     cmd  = data.get("command", "normal")
     PENDING_COMMAND = {"command": cmd}
     return {"status": "ok", "command": cmd}, 200
+
+
+@app.route("/reset", methods=["POST"])
+def reset():
+    """Kill simulator and clear latest data so dashboard can restart fresh."""
+    global LATEST, PENDING_COMMAND, SIM_PID
+    import signal
+
+    # Kill simulator process if we know its PID
+    if SIM_PID:
+        try:
+            os.kill(SIM_PID, signal.SIGTERM)
+            print(f"🛑 Killed simulator PID {SIM_PID}")
+        except Exception as e:
+            print(f"⚠️  Could not kill simulator: {e}")
+        SIM_PID = None
+
+    # Clear latest telemetry so dashboard knows simulator is gone
+    LATEST          = None
+    PENDING_COMMAND = {"command": "normal"}
+
+    return {"status": "reset_ok"}, 200
 
 
 if __name__ == "__main__":
