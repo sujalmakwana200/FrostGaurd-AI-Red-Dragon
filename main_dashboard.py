@@ -416,6 +416,8 @@ if "initialized" not in st.session_state:
         "rerouted"      : False,
         "reroute_target": None,
         "dist_covered"  : 0.0,
+        "prev_lat"      : START_LAT,
+        "prev_lon"      : START_LON,
         "speed_kmh"     : BASE_SPEED,
         "speed_history" : [BASE_SPEED] * 20,
         "temp_history"  : [4.5] * 20,
@@ -478,8 +480,17 @@ reset_btn      = ctrl2.button("🔄 Reset", key="btn_reset")
 ask_ai_btn     = ctrl3.button("🧠 Ask Gemini", key="btn_gemini")
 
 if reset_btn:
+    # 1. Tell bridge to kill old simulator and clear data
+    try:
+        requests.post("http://127.0.0.1:5000/reset", timeout=3)
+    except Exception:
+        pass
+
+    # 2. Clear all session state
     for k in list(st.session_state.keys()):
         del st.session_state[k]
+
+    # 3. Rerun — launch_background_services will start fresh simulator
     st.rerun()
 
 if ask_ai_btn and "initialized" in st.session_state:
@@ -534,12 +545,17 @@ if True:
     
         else:
 
-            lat, lon = route[idx]
+            # ── Two separate positions ──
+            # anim_lat/lon  = dashboard's internal waypoint (smooth animation)
+            # real_lat/lon  = real GPS from simulator via bridge (rerouting + CRITICAL)
+            anim_lat, anim_lon = route[idx]
             st.session_state.waypoint_idx += 1
 
-            # Poll bridge for real telemetry from simulator.
-            # If bridge is live, override temp AND coords with real values.
-            # Also pull status directly so rerouting matches simulator's state.
+            # Start with animation position — overridden by real GPS if available
+            lat, lon = anim_lat, anim_lon
+            real_lat, real_lon = anim_lat, anim_lon
+
+            # Poll bridge for real telemetry
             telemetry_used = False
             tele_status    = None
             try:
@@ -550,16 +566,27 @@ if True:
                         st.session_state.temp = float(tele["temperature"])
                         telemetry_used = True
                     if "lat" in tele and "lng" in tele:
-                        lat = float(tele["lat"])
-                        lon = float(tele["lng"])
-                        # Also update the current waypoint to match real GPS
-                        # so the truck dot on the rerouted path stays accurate
-                        st.session_state.last_real_lat = lat
-                        st.session_state.last_real_lon = lon
+                        real_lat = float(tele["lat"])
+                        real_lon = float(tele["lng"])
+                        st.session_state.last_real_lat = real_lat
+                        st.session_state.last_real_lon = real_lon
                     if "status" in tele:
-                        tele_status = tele["status"]   # "SAFE" / "WARNING" / "CRITICAL"
+                        tele_status = tele["status"]
             except Exception:
                 telemetry_used = False
+
+            # ── Position logic ──
+            # SAFE + bridge running  → smooth animation on NH48
+            # WARNING/CRITICAL       → real GPS from simulator
+            # Rerouted               → real GPS only (dot follows actual truck, not internal waypoints)
+            if st.session_state.rerouted:
+                # Stop advancing internal waypoints — real GPS drives everything
+                st.session_state.waypoint_idx -= 1   # undo the increment above
+                lat, lon = real_lat, real_lon
+            elif tele_status in ("CRITICAL", "WARNING"):
+                lat, lon = real_lat, real_lon
+            else:
+                lat, lon = anim_lat, anim_lon
 
             # ── Simulated speed (smooth, realistic) ──
             target_speed  = BASE_SPEED + random.uniform(-SPEED_NOISE, SPEED_NOISE)
@@ -572,9 +599,16 @@ if True:
             st.session_state.speed_history = st.session_state.speed_history[-20:]
 
             # ── Distance covered ──
-            if idx > 0:
-                prev_lat, prev_lon = route[idx - 1]
-                st.session_state.dist_covered += haversine(prev_lat, prev_lon, lat, lon)
+            # Use last known real position → current position
+            # Capped at 0.5km per tick to prevent GPS jumps causing spikes
+            step = haversine(
+                st.session_state.prev_lat, st.session_state.prev_lon,
+                lat, lon
+            )
+            if step < 0.5:   # ignore teleport jumps > 500m in one tick
+                st.session_state.dist_covered += step
+            st.session_state.prev_lat = lat
+            st.session_state.prev_lon = lon
 
             dist_remaining = max(st.session_state.total_dist - st.session_state.dist_covered, 0)
             eta_min = (dist_remaining / max(st.session_state.speed_kmh, 1)) * 60
@@ -621,6 +655,8 @@ if True:
                 st.session_state.waypoint_idx    = 0
                 st.session_state.total_dist      = new_dist
                 st.session_state.dist_covered    = 0.0
+                st.session_state.prev_lat        = reroute_lat
+                st.session_state.prev_lon        = reroute_lon
                 dist_to = haversine(lat, lon, cs["lat"], cs["lon"])
                 st.session_state.warning_log.insert(0, {
                     "icon": "🚨", "time": time.strftime("%H:%M:%S"),
