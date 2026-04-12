@@ -583,9 +583,11 @@ if True:
                 anim_lat, anim_lon = real_lat, real_lon
 
             # ── Final truck dot position ──
-            # Rerouted or WARNING/CRITICAL → real GPS (follows actual truck)
-            # SAFE normal               → animation (smooth on NH48)
-            if st.session_state.rerouted or tele_status in ("CRITICAL", "WARNING"):
+            if st.session_state.rerouted:
+                # Simulator doesn't know about reroutes, so follow the dashboard's new emergency path
+                lat, lon = anim_lat, anim_lon
+            elif tele_status in ("CRITICAL", "WARNING"):
+                # Follow real telemetry if just a warning
                 lat, lon = real_lat, real_lon
             else:
                 lat, lon = anim_lat, anim_lon
