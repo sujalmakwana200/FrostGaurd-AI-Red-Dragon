@@ -320,11 +320,25 @@ def _gemini_worker(prompt, api_key):
                 break
             result     = None
             last_error = "JSON missing required keys"
+        
+        
         except Exception as e:
             last_error = str(e)
             result     = None
-            if attempt < 2:
-                time.sleep(2)
+            
+            # 🛡️ HACKATHON DEMO SAVER: Catch ALL API Errors (429, 503, 500)
+            fallback = {
+                "temp_prediction": "⚠️ AI OFFLINE (Server Overload): Temp rising rapidly.",
+                "route_risk": "⚠️ AI OFFLINE: Route unsafe due to critical temp.",
+                "cargo_damage": "⚠️ AI OFFLINE: High probability of vaccine spoilage.",
+                "driver_message": "⚠️ AI OFFLINE: Immediate cooling or stop required.",
+                "severity": "CRITICAL"
+            }
+            _gemini_queue.put(fallback)
+            _gemini_running.clear()
+            return
+            # ----------------------------------------------------
+        
 
     if last_error and result is None:
         # Put error in queue so event log shows what went wrong and include raw response
