@@ -602,10 +602,13 @@ if True:
 
         # ── Journey complete check ──
         if st.session_state.rerouted and st.session_state.reroute_target:
-            # Rerouted: complete when within 0.5km of cold storage
             t = st.session_state.reroute_target
-            if haversine(real_lat, real_lon, t["lat"], t["lon"]) < 0.5:
+            # Check if the animated truck has arrived, NOT the simulator
+            curr_lat, curr_lon = anim_route[min(idx, len(anim_route)-1)]
+            if haversine(curr_lat, curr_lon, t["lat"], t["lon"]) < 0.5:
                 st.session_state["journey_complete"] = True
+        elif idx >= len(anim_route):
+            st.session_state["journey_complete"] = True
         elif idx >= len(anim_route):
             st.session_state["journey_complete"] = True
 
