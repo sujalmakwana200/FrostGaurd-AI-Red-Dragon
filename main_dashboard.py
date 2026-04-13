@@ -547,8 +547,8 @@ placeholder = st.empty()
 #  LIVE STEP (single-run per page load; browser auto-refresh handles iteration)
 # ─────────────────────────────────────────────────────────────
 if True:
-    # If journey already marked complete, just show arrival and stop auto-refresh
-    if st.session_state.get("journey_complete", False):
+    # If  already marked complete, just show arrival and stop auto-refresh
+    if st.session_state.get("_complete", False):
         with placeholder.container():
             t = st.session_state.reroute_target
             msg = f"✅ Arrived at **{t['name']}**, {t['city']} — Cargo secured 🧊" if t else "✅ Arrived in **Ahmedabad** — Journey complete 🎉"
@@ -619,12 +619,16 @@ if True:
                        if t else "✅ Arrived in **Ahmedabad** — Journey complete 🎉")
                 st.success(msg)
         else:
-            # Advance animation on original NH48 route
+           # Advance animation
             if idx < len(anim_route):
                 anim_lat, anim_lon = anim_route[idx]
                 st.session_state.waypoint_idx += 1
             else:
-                anim_lat, anim_lon = real_lat, real_lon
+                # If rerouted, stop at the cold storage! Don't snap back to highway.
+                if st.session_state.rerouted:
+                    anim_lat, anim_lon = anim_route[-1]
+                else:
+                    anim_lat, anim_lon = real_lat, real_lon
 
             # ── Final truck dot position ──
             if st.session_state.rerouted:
