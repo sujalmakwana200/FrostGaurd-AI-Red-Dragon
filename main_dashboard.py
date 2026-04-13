@@ -476,6 +476,9 @@ if _fail_clicked:
         )
     except Exception:
         pass
+    # ⚡ Instant UI Feedback: Spike temp in dashboard memory immediately
+    st.session_state.temp = 8.5
+    st.rerun()
 reset_btn      = ctrl2.button("🔄 Reset", key="btn_reset")
 ask_ai_btn     = ctrl3.button("🧠 Ask Gemini", key="btn_gemini")
 
@@ -537,7 +540,7 @@ if True:
         anim_route = st.session_state.active_route
         idx        = st.session_state.waypoint_idx
 
-        # ── Poll bridge for real telemetry FIRST ──
+       # ── Poll bridge for real telemetry FIRST ──
         real_lat       = st.session_state.get("last_real_lat", START_LAT)
         real_lon       = st.session_state.get("last_real_lon", START_LON)
         telemetry_used = False
@@ -558,6 +561,25 @@ if True:
                     tele_status = tele["status"]
         except Exception:
             telemetry_used = False
+
+        # ── Fast-Forward Sync (Fixes browser refresh restarting from scratch) ──
+        if telemetry_used and not st.session_state.get("synced_to_sim", False):
+            # Find the closest waypoint to the simulator's true current location
+            min_dist = float('inf')
+            closest_idx = 0
+            for i, (rlat, rlon) in enumerate(anim_route):
+                d = haversine(real_lat, real_lon, rlat, rlon)
+                if d < min_dist:
+                    min_dist = d
+                    closest_idx = i
+            
+            # Snap the dashboard's animation index to match the background simulator
+            st.session_state.waypoint_idx = closest_idx
+            st.session_state.synced_to_sim = True
+            # Approximate distance covered so the metrics don't read 0
+            st.session_state.dist_covered = haversine(START_LAT, START_LON, real_lat, real_lon)
+
+        # ── Journey complete check ──
 
         # ── Journey complete check ──
         if st.session_state.rerouted and st.session_state.reroute_target:
@@ -593,6 +615,7 @@ if True:
                 lat, lon = anim_lat, anim_lon
 
            # ── Simulated speed (smooth, realistic) ──
+
            # ── Simulated speed (smooth, realistic) ──
             if tele_status == "CRITICAL" or st.session_state.temp > CRITICAL_AT:
                 # Demo purposes only: Truck speeds up during crisis
@@ -604,10 +627,6 @@ if True:
             # Smooth toward target — no sudden jumps
             new_speed = current_speed + (target_speed - current_speed) * 0.08
             st.session_state.speed_kmh = round(new_speed, 1)
-            # Smooth toward target — no sudden jumps
-            new_speed = current_speed + (target_speed - current_speed) * 0.08
-            st.session_state.speed_kmh = round(new_speed, 1)
-
             st.session_state.speed_history.append(st.session_state.speed_kmh)
             st.session_state.speed_history = st.session_state.speed_history[-20:]
 
