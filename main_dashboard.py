@@ -236,11 +236,16 @@ def voice(msg: str):
 
 
 
+
 # ─────────────────────────────────────────────────────────────
 #  GEMINI — official SDK, background thread, never blocks UI
 # ─────────────────────────────────────────────────────────────
-_gemini_queue   = queue.Queue()
-_gemini_running = threading.Event()
+@st.cache_resource
+def get_gemini_globals():
+    """Caches the thread queue so it survives Streamlit's 1-second reruns."""
+    return queue.Queue(), threading.Event()
+
+_gemini_queue, _gemini_running = get_gemini_globals()
 
 
 def _get_active_key():
