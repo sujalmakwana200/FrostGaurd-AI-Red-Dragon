@@ -866,7 +866,30 @@ if True:
                     st.error(f"🚨 CRITICAL BREACH — {temp}°C  ·  REROUTING TO **{t['name'].upper()}**, {t['city'].upper()} 🧊")
                 elif is_warn:
                     st.warning(f"⚠️ WARNING — Temperature rising: **{temp}°C**  ·  Compressor activated")
+        # ── Fallback variables to freeze the dashboard when the truck arrives ──
+        if "temp" not in locals():
+            temp = st.session_state.temp
+            lat = st.session_state.prev_lat
+            lon = st.session_state.prev_lon
+            is_crit = temp > CRITICAL_AT
+            is_warn = temp > SAFE_MAX
+            eta_min = 0.0
 
+            # Rebuild the final map snapshot
+            dot_color = [255, 40, 40, 255] if is_crit else ([255, 165, 0, 255] if is_warn else [0, 220, 100, 255])
+            layers = []
+            orig_line = [[lo, la] for la, lo in st.session_state.main_route]
+            layers.append(pdk.Layer("PathLayer", data=[{"path": orig_line}], get_path="path", get_color=[40, 80, 200, 70] if st.session_state.rerouted else [0, 140, 255, 130], width_scale=14, width_min_pixels=3))
+            if st.session_state.rerouted:
+                rr_line = [[lo, la] for la, lo in st.session_state.active_route]
+                layers.append(pdk.Layer("PathLayer", data=[{"path": rr_line}], get_path="path", get_color=[255, 110, 0, 220], width_scale=16, width_min_pixels=4))
+            layers.append(pdk.Layer("ScatterplotLayer", data=[{"lat": c["lat"], "lon": c["lon"], "name": c["name"], "city": c["city"]} for c in COLD_STORAGES], get_position="[lon, lat]", get_color=[0, 200, 255, 180], get_radius=500, radiusMinPixels=9, pickable=True))
+            if st.session_state.rerouted and st.session_state.reroute_target:
+                t = st.session_state.reroute_target
+                layers.append(pdk.Layer("ScatterplotLayer", data=[{"lat": t["lat"], "lon": t["lon"]}], get_position="[lon, lat]", get_color=[255, 50, 50, 60], get_radius=1400, radiusMinPixels=22))
+            layers.append(pdk.Layer("ScatterplotLayer", data=[{"lat": lat, "lon": lon}], get_position="[lon, lat]", get_color=dot_color, get_radius=320, radiusMinPixels=10, radiusMaxPixels=20))
+
+        # ── ROW 1: 6 metric cards ──
         # ── ROW 1: 6 metric cards ──
         m1, m2, m3, m4, m5, m6 = st.columns(6)
         m1.metric("📦 Cargo",       "Vaccines")
