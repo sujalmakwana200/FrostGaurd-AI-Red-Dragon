@@ -159,7 +159,7 @@ while idx < len(ROUTE):
     try:
         requests.post(f"{BRIDGE_URL}/telemetry", json=payload, timeout=3)
     except Exception:
-        print("⚠️  Bridge not reachable on port 5000")
+     print("⚠️  Bridge not reachable on port 5000")
 
     time.sleep(3)
 
