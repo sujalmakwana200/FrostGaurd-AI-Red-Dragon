@@ -181,7 +181,7 @@ MIT License — free to use, modify, and distribute.
 
 [![Sujal](https://img.shields.io/badge/Sujal-Technical_Lead-blue)](https://github.com/sujalmakwana200)
 [![Ritik](https://img.shields.io/badge/Ritik-Developer-green)](https://github.com/ritikraushan812-rgb)
-[![Rohit](https://img.shields.io/badge/Rohit-Intern-orange)](https://github.com/rohit)
+[![Rohit](https://img.shields.io/badge/Rohit-Intern-orange)](https://github.com/Rohit382538)
 [![Sharang](https://img.shields.io/badge/Sharang-Product_Owner-purple)](https://github.com/Sharang0623)
 [![Dheeraj](https://img.shields.io/badge/Dheeraj-Intern-orange)](https://github.com/dheeraj)
 [![Alanjohn](https://img.shields.io/badge/Alanjohn-Business_SPOC-red)](https://github.com/dev-alanjohn)
